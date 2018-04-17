@@ -34,6 +34,7 @@ import com.monke.monkeybook.R;
 import com.monke.monkeybook.base.MBaseActivity;
 import com.monke.monkeybook.bean.BookShelfBean;
 import com.monke.monkeybook.dao.DbHelper;
+import com.monke.monkeybook.help.BookshelfHelp;
 import com.monke.monkeybook.help.LauncherIcon;
 import com.monke.monkeybook.help.MyItemTouchHelpCallback;
 import com.monke.monkeybook.model.BookSourceManage;
@@ -50,7 +51,6 @@ import com.monke.monkeybook.widget.refreshview.OnRefreshWithProgressListener;
 import com.monke.monkeybook.widget.refreshview.RefreshRecyclerView;
 import com.monke.monkeybook.widget.refreshview.RefreshRecyclerViewAdapter;
 
-import java.net.URL;
 import java.util.List;
 
 import butterknife.BindView;
@@ -145,7 +145,9 @@ public class MainActivity extends MBaseActivity<IMainPresenter> implements IMain
     protected void bindEvent() {
         bindRvShelfEvent();
         MyItemTouchHelpCallback itemTouchHelpCallback = new MyItemTouchHelpCallback();
-        itemTouchHelpCallback.setDragEnable(true);
+        if (bookPx.equals("2")) {
+            itemTouchHelpCallback.setDragEnable(true);
+        }
         if (viewIsList) {
             bookShelfListAdapter.setItemClickListener(getAdapterListener());
             itemTouchHelpCallback.setOnItemTouchCallbackListener(bookShelfListAdapter.getItemTouchCallbackListener());
@@ -208,7 +210,7 @@ public class MainActivity extends MBaseActivity<IMainPresenter> implements IMain
         switch (id) {
             case R.id.action_search:
                 //点击搜索
-                startActivityByAnim(new Intent(this, SearchActivity.class),
+                startActivityByAnim(new Intent(this, SearchBookActivity.class),
                         toolbar, "to_search", android.R.anim.fade_in, android.R.anim.fade_out);
                 break;
             case R.id.action_add_url:
@@ -226,7 +228,7 @@ public class MainActivity extends MBaseActivity<IMainPresenter> implements IMain
                 LauncherIcon.Change();
                 break;
             case R.id.action_clear_content:
-                clearContent();
+                BookshelfHelp.clearLineContent();
                 break;
             case android.R.id.home:
                 if (drawer.isDrawerOpen(GravityCompat.START)
@@ -238,16 +240,6 @@ public class MainActivity extends MBaseActivity<IMainPresenter> implements IMain
                 break;
         }
         return super.onOptionsItemSelected(item);
-    }
-
-    private void clearContent() {
-        moProgressHUD.showTwoButton(getString(R.string.clear_all_content),
-                getString(R.string.cancel), view -> moProgressHUD.dismiss(),
-                getString(R.string.ok), view -> {
-                    moProgressHUD.dismiss();
-                    mPresenter.clearAllContent();
-                }
-        );
     }
 
     //设置ToolBar

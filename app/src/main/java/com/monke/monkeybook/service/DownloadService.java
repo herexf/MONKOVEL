@@ -1,7 +1,6 @@
 //Copyright (c) 2017. 章钦豪. All rights reserved.
 package com.monke.monkeybook.service;
 
-import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
@@ -21,7 +20,6 @@ import com.monke.monkeybook.R;
 import com.monke.monkeybook.base.observer.SimpleObserver;
 import com.monke.monkeybook.bean.BookContentBean;
 import com.monke.monkeybook.bean.BookShelfBean;
-import com.monke.monkeybook.bean.ChapterListBean;
 import com.monke.monkeybook.bean.DownloadChapterBean;
 import com.monke.monkeybook.dao.BookContentBeanDao;
 import com.monke.monkeybook.dao.BookShelfBeanDao;
@@ -44,9 +42,9 @@ public class DownloadService extends Service {
     public static final String doneAction = "doneAction";
     public static final String addDownloadAction = "addDownload";
     public static final int reTryTimes = 1;
-    private int notificationId = 19931118;
+    private final int notificationId = 19931118;
+
     private Boolean isStartDownload = false;
-    private Boolean isInit = false;
     private Boolean isDownloading = false;
 
     @Override
@@ -59,8 +57,8 @@ public class DownloadService extends Service {
                 .setContentTitle(getString(R.string.download_offline_t))
                 .setContentText(getString(R.string.download_offline_s));
         //发送通知
-        Notification notification = builder.build();
-        startForeground(notificationId, notification);
+        startForeground(notificationId, builder.build());
+        RxBus.get().register(this);
     }
 
     @Override
@@ -68,15 +66,10 @@ public class DownloadService extends Service {
         stopForeground(true);
         super.onDestroy();
         RxBus.get().unregister(this);
-        isInit = true;
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (!isInit) {
-            isInit = true;
-            RxBus.get().register(this);
-        }
         String action = intent.getAction();
         if (action == null) {
             stopSelf();
@@ -107,10 +100,9 @@ public class DownloadService extends Service {
     private void addNewTask(final String noteUrl, final int start, final int end) {
         isStartDownload = true;
         Observable.create((ObservableOnSubscribe<Boolean>) e -> {
-            List<BookShelfBean> temp = DbHelper.getInstance().getmDaoSession().getBookShelfBeanDao().queryBuilder()
-                    .where(BookShelfBeanDao.Properties.NoteUrl.eq(noteUrl)).build().list();
-            if (!(temp == null || temp.size() == 0)) {
-                BookShelfBean bookShelf = temp.get(0);
+            BookShelfBean bookShelf = DbHelper.getInstance().getmDaoSession().getBookShelfBeanDao().queryBuilder()
+                    .where(BookShelfBeanDao.Properties.NoteUrl.eq(noteUrl)).build().unique();
+            if (!(bookShelf == null)) {
                 for (int i = start; i <= end; i++) {
                     DownloadChapterBean item = new DownloadChapterBean();
                     item.setNoteUrl(bookShelf.getNoteUrl());
@@ -148,18 +140,17 @@ public class DownloadService extends Service {
         if (isStartDownload) {
             Observable.create((ObservableOnSubscribe<DownloadChapterBean>) e -> {
                 List<BookShelfBean> bookShelfBeanList = DbHelper.getInstance().getmDaoSession().getBookShelfBeanDao().queryBuilder()
+                        .where(BookShelfBeanDao.Properties.Tag.notEq(BookShelfBean.LOCAL_TAG))
                         .orderDesc(BookShelfBeanDao.Properties.FinalDate).list();
                 if (bookShelfBeanList != null && bookShelfBeanList.size() > 0) {
                     for (BookShelfBean bookItem : bookShelfBeanList) {
-                        if (!bookItem.getTag().equals(BookShelfBean.LOCAL_TAG)) {
-                            List<DownloadChapterBean> downloadChapterList = DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao()
-                                    .queryBuilder().where(DownloadChapterBeanDao.Properties.NoteUrl.eq(bookItem.getNoteUrl()))
-                                    .orderAsc(DownloadChapterBeanDao.Properties.DurChapterIndex).limit(1).list();
-                            if (downloadChapterList != null && downloadChapterList.size() > 0) {
-                                e.onNext(downloadChapterList.get(0));
-                                e.onComplete();
-                                return;
-                            }
+                        List<DownloadChapterBean> downloadChapterList = DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao().queryBuilder()
+                                .where(DownloadChapterBeanDao.Properties.NoteUrl.eq(bookItem.getNoteUrl()))
+                                .orderAsc(DownloadChapterBeanDao.Properties.DurChapterIndex).limit(1).list();
+                        if (downloadChapterList != null && downloadChapterList.size() > 0) {
+                            e.onNext(downloadChapterList.get(0));
+                            e.onComplete();
+                            return;
                         }
                     }
                     DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao().deleteAll();
@@ -215,32 +206,18 @@ public class DownloadService extends Service {
     private void downloading(final DownloadChapterBean data, final int durTime) {
         if (durTime < reTryTimes && isStartDownload) {
             isProgress(data);
-            Observable.create((ObservableOnSubscribe<BookContentBean>) e -> {
-                List<BookContentBean> result = DbHelper.getInstance().getmDaoSession().getBookContentBeanDao().queryBuilder()
-                        .where(BookContentBeanDao.Properties.DurChapterUrl.eq(data.getDurChapterUrl())).list();
-                if (result != null && result.size() > 0) {
-                    e.onNext(result.get(0));
-                } else {
-                    e.onNext(new BookContentBean());
-                }
+            Observable.create((ObservableOnSubscribe<Boolean>) e -> {
+                BookContentBean result = DbHelper.getInstance().getmDaoSession().getBookContentBeanDao().queryBuilder()
+                        .where(BookContentBeanDao.Properties.DurChapterUrl.eq(data.getDurChapterUrl())).unique();
+                e.onNext(result == null);
                 e.onComplete();
-            }).flatMap(bookContentBean -> {
-                if (bookContentBean.getDurChapterUrl() == null || bookContentBean.getDurChapterUrl().length() <= 0) {
-                    return WebBookModelImpl.getInstance().getBookContent(data.getDurChapterUrl(), data.getDurChapterIndex(), data.getTag())
-                            .map(bookContentBean1 -> {
-                                DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao().delete(data);
-                                if (bookContentBean1.getRight()) {
-                                    bookContentBean1.setNoteUrl(data.getNoteUrl());
-                                    DbHelper.getInstance().getmDaoSession().getBookContentBeanDao().insertOrReplace(bookContentBean1);
-                                    DbHelper.getInstance().getmDaoSession().getChapterListBeanDao()
-                                            .update(new ChapterListBean(data.getNoteUrl(), data.getDurChapterIndex(), data.getDurChapterUrl(), data.getDurChapterName(), data.getTag(), true));
-                                }
-                                return bookContentBean1;
-                            });
+            }).flatMap(result -> {
+                if (result) {
+                    return WebBookModelImpl.getInstance().getBookContent(data.getDurChapterUrl(), data.getDurChapterIndex(), data.getTag());
                 } else {
                     return Observable.create(e -> {
                         DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao().delete(data);
-                        e.onNext(bookContentBean);
+                        e.onNext(new BookContentBean());
                         e.onComplete();
                     });
                 }
@@ -350,16 +327,16 @@ public class DownloadService extends Service {
     private void isPause() {
         isDownloading = false;
         Observable.create((ObservableOnSubscribe<DownloadChapterBean>) e -> {
-            List<BookShelfBean> bookShelfBeanList = DbHelper.getInstance().getmDaoSession().getBookShelfBeanDao().queryBuilder().orderDesc(BookShelfBeanDao.Properties.FinalDate).list();
+            List<BookShelfBean> bookShelfBeanList = DbHelper.getInstance().getmDaoSession().getBookShelfBeanDao().queryBuilder()
+                    .where(BookShelfBeanDao.Properties.Tag.notEq(BookShelfBean.LOCAL_TAG))
+                    .orderDesc(BookShelfBeanDao.Properties.FinalDate).list();
             if (bookShelfBeanList != null && bookShelfBeanList.size() > 0) {
                 for (BookShelfBean bookItem : bookShelfBeanList) {
-                    if (!bookItem.getTag().equals(BookShelfBean.LOCAL_TAG)) {
-                        List<DownloadChapterBean> downloadChapterList = DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao().queryBuilder().where(DownloadChapterBeanDao.Properties.NoteUrl.eq(bookItem.getNoteUrl())).orderAsc(DownloadChapterBeanDao.Properties.DurChapterIndex).limit(1).list();
-                        if (downloadChapterList != null && downloadChapterList.size() > 0) {
-                            e.onNext(downloadChapterList.get(0));
-                            e.onComplete();
-                            return;
-                        }
+                    List<DownloadChapterBean> downloadChapterList = DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao().queryBuilder().where(DownloadChapterBeanDao.Properties.NoteUrl.eq(bookItem.getNoteUrl())).orderAsc(DownloadChapterBeanDao.Properties.DurChapterIndex).limit(1).list();
+                    if (downloadChapterList != null && downloadChapterList.size() > 0) {
+                        e.onNext(downloadChapterList.get(0));
+                        e.onComplete();
+                        return;
                     }
                 }
                 DbHelper.getInstance().getmDaoSession().getDownloadChapterBeanDao().deleteAll();
